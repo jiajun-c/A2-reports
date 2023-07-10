@@ -26,14 +26,16 @@
 
 \section{任务介绍}
 
-A2的赛题主要任务是为loongarch架构移植thunderbird78或者以上的版本，并将其打包为deb包。
+A2的赛题主要任务是为loongarch架构的桌面系统上移植thunderbird78或者以上的版本，并将其打包为deb包。
 \subsection{所移植thunderbird信息}
+Mozilla Thunderbird，非正式中文名称为雷鸟，是由Mozilla基金会研发的一款自由及开放源码的跨平台电邮客户端、新闻阅读器、聚合器以及即时通讯软件。
 
-本次移植的雷鸟版本为114.0b6，由mozilla公司进行开发，具体信息如图\ref{thunderbird}所示
+
+本次移植的雷鸟版本为114.0b6，由mozilla公司在7.27日进行发布，具体信息如图\ref{thunderbird}所示
 \begin{figure}[!htb]
     \centering
     \includegraphics[width=0.6\textwidth]{thunderbird.png}
-    \caption{thunderbird信息}
+    \caption{开发机中thunderbird信息}
     \label{thunderbird}
 \end{figure}
 
@@ -58,23 +60,80 @@ loongnix操作系统，cpu型号3C5000L, cpu核数4核，4G内存，100G硬盘�
 \section{软件移植记录}
 \subsection{依赖适配}
 
-编译thunderbird114及运行测试依赖于rustc1.68以上， 以及gcc13以上的版本
+编译thunderbird114及运行测试依赖于rustc1.69以上， 以及gcc13以上的版本，llvm13.0 以上的版本，因此我们在开发机上重新编译了相关的依赖，并同时将其中部分软件打包为deb包。
 
 \subsubsection{rustc1.71.0-dev移植}
 Loongarch已于24日进入Tier2。从5-25日开始，原版的rustup将提供nightly版的原生Loongarch rust工具链。从rust1.71开始，rustup将提供stable版本的原生Loongarch rust工具链
 
 但是由于loongarch新旧世界的问题，无法直接使用最新的rust，需要在主机上进行交叉编译。
 
-从rust仓库克隆1.71.0-dev到本地后，修改config.toml(rust配置文件)，使得产出loongarch架构的二进制包。
+从rust仓库克隆1.71.0-dev到本地后，修改config.toml(修改可以参考如下所示)，使得产出loongarch架构的二进制包。
+
+\begin{lstlisting}
+    changelog-seen = 2
+    [build]
+    docs = false
+    host = ["loongarch64-unknown-linux-gnu"]
+    target = ["loongarch64-unknown-linux-gnu","x86_64-unknown-linux-gnu"] #后面那个可以去掉
+
+    #从2023年5月25日开始，很可能不需要用夜版来bootstrap了，但我没试过
+    rustc = "/home/coa/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/rustc"
+    cargo = "/home/coa/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo"
+    rustfmt = "/home/coa/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/rustfmt"
+
+    build-stage = 2
+
+    # Enable a build of the extended Rust tool set which is not only the compiler
+    # but also tools such as Cargo. 
+    extended = true
+    # Turn this off if you just want rustc -- CoA
+    tools = [    
+    "cargo"
+    ]
+
+    [target.loongarch64-unknown-linux-gnu]  # Change this if you need. (obviously) -- CoA
+    cc = "/home/coa/CROSS/opt/cross/bin/loongarch64-unknown-linux-gnu-gcc"
+    cxx = "/home/coa/CROSS/opt/cross/bin/loongarch64-unknown-linux-gnu-g++"
+    ar = "/home/coa/CROSS/opt/cross/bin/loongarch64-unknown-linux-gnu-ar"
+    ranlib = "/home/coa/CROSS/opt/cross/bin/loongarch64-unknown-linux-gnu-ranlib"
+    linker = "/home/coa/CROSS/opt/cross/bin/loongarch64-unknown-linux-gnu-gcc"
+
+    [rust]
+    dist-src = false
+    channel = "beta"
+
+    [llvm]
+    download-ci-llvm = false
+    ccache = true  # 除非你确信真的只需要编译一次，将来也不打算换个rustc版本再试。否则最好还是保持打开的好
+    targets = "LoongArch;X86"  # This will save a lot of time   -- CoA
+    experimental-targets = ""  
+
+    [dist]
+    src-tarball = false
+    compression-formats = ["xz"]
+\end{lstlisting}
 
 尽管loongnix的仓库中提供了loongnix1.65的rust，但是经过对比发现主线中的rust增加了对于loongarch的特定优化。
 
 \subsubsection{gcc-13 移植}
 
-gcc-13的移植较为顺利，从debian sid的源中直接获取到gcc-13deb包的源码包后，修改源码包中的debian/rules文件即可，在其中仅保留对c, c++语言的支持，同时关闭对32位的支持，如果开启对其他语言的支持，
-将需要编译deb中的libffi，但是其中的libffi的版本为3.4.1，未引入对于loongarch架构的支持，3.4.3中引入了对于loongarch架构的支持，但是其需要的autoconf2.71，与gcc-13所需求的的2.69相互冲突。
+gcc-13的移植较为顺利，从debian sid的源中直接获取到gcc-13deb包的源码包后，修改源码包中的debian/rules
 
-在编译雷鸟的过程中，仅开启对于c, c++的支持即可完成编译。
+
+在其中仅保留对c, c++语言的支持，同时关闭对32位的支持，如果开启对其他语言的支持，
+将需要编译deb中的libffi，但是其中的libffi的版本为3.4.1，尚未引入对于loongarch架构的支持，3.4.3中引入了对于loongarch架构的支持，但是其需要的autoconf2.71，与gcc-13所需求的的2.69相互冲突，
+所以我们最终选择进行关闭。
+
+在编译雷鸟的过程中，仅开启对于c, c++的支持即可完成编译，
+
+进行打包后生成的相关deb包如图\ref{deb}所示，如有需要欢迎联系chengjiajun20@gmail.com
+
+\begin{figure}[!htb]
+    \centering
+    \includegraphics[width=1.0\textwidth]{package.png}
+    \caption{生成的deb包}
+    \label{deb}
+\end{figure}
 
 \subsubsection{llvm16.4移植}
 
@@ -91,7 +150,18 @@ gcc-13的移植较为顺利，从debian sid的源中直接获取到gcc-13deb包�
     export MOZILLA_OFFICIAL=1
 \end{lstlisting}
 
-随后使用thunderbird和loongarch相关的patch，随后使用mach build进行编译
+随后使用thunderbird和loongarch相关的patch，随后使用mach build进行编译，对于相关patch的解释如下所示
+
+\begin{center}
+    \begin{tabular}{cccc}
+        \toprule
+        patch & 来源 & 用途 & 潜在的问题\\
+        \midrule
+        &  &  & \\
+        &  &  & \\
+        \bottomrule
+    \end{tabular}
+\end{center}
 
 修改python/mozbuild/mozbuild/repackaging/deb.py 在\_DEB\_ARCH中增加loongarch64的相关信息
 
@@ -119,7 +189,8 @@ thunderbird-114.0b6.source.tar.xz以及thunderbird-default\_114.0~build1\_all.de
 如果您使用的dak等软件源搭建工具，进行合理的配置后将可以使得其进行自动的数据更新。
 \section{致谢}
 
-感谢LA UOSC社区对我们相关问题的回应，以及debian中文社区对deb打包相关问题的回复
+感谢LA UOSC社区对我们相关问题的回应，以及debian中文社区对deb打包相关问题的回复。
+
 
 \nocite{*}
 \printbibliography[heading=bibintoc, title=\ebibname]
